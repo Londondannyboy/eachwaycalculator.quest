@@ -1,22 +1,22 @@
 import {
   CopilotRuntime,
-  OpenAIAdapter,
+  GoogleGenerativeAIAdapter,
   copilotRuntimeNextJSAppRouterEndpoint,
 } from "@copilotkit/runtime";
-import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextRequest } from "next/server";
 
 // Lazy initialization to avoid build-time errors
-let openai: OpenAI | null = null;
-let serviceAdapter: OpenAIAdapter | null = null;
+let genAI: GoogleGenerativeAI | null = null;
+let serviceAdapter: GoogleGenerativeAIAdapter | null = null;
 let runtime: CopilotRuntime | null = null;
 
 function getRuntime() {
-  if (!openai) {
-    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (!genAI) {
+    genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || "");
   }
   if (!serviceAdapter) {
-    serviceAdapter = new OpenAIAdapter({ openai });
+    serviceAdapter = new GoogleGenerativeAIAdapter({ model: "gemini-1.5-flash" });
   }
   if (!runtime) {
     runtime = new CopilotRuntime();
