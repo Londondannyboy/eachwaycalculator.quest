@@ -5,11 +5,12 @@ Integrates with Zep for user memory and knowledge graphs.
 """
 
 import os
+import sys
 import json
 from typing import Optional
 from dataclasses import dataclass
 
-from fastapi import FastAPI, Request, Header
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse
 from pydantic import BaseModel
@@ -411,8 +412,50 @@ async def register_user(request: Request):
 # CLM ENDPOINT FOR HUME VOICE
 # ============================================================================
 
+def extract_session_id(request: Request, body: dict) -> Optional[str]:
+    """Extract session ID from various sources (Hume sends it in body)."""
+    # Check body first (Hume's primary method)
+    session_id = body.get("custom_session_id") or body.get("customSessionId") or body.get("session_id")
+    if session_id:
+        return session_id
+
+    # Check metadata
+    metadata = body.get("metadata", {})
+    session_id = metadata.get("custom_session_id") or metadata.get("session_id")
+    if session_id:
+        return session_id
+
+    # Check headers as fallback
+    for header in ["x-hume-session-id", "x-custom-session-id", "x-session-id"]:
+        session_id = request.headers.get(header)
+        if session_id:
+            return session_id
+
+    return None
+
+
+def parse_session_id(session_id: Optional[str]) -> dict:
+    """
+    Parse custom session ID format: "userName|userId"
+    Returns dict with user_name and user_id.
+    """
+    if not session_id:
+        return {"user_name": "", "user_id": ""}
+
+    # Handle anonymous sessions
+    if session_id.startswith("anon_"):
+        return {"user_name": "", "user_id": ""}
+
+    parts = session_id.split("|")
+    user_name = parts[0] if len(parts) > 0 else ""
+    user_id = parts[1] if len(parts) > 1 else ""
+
+    return {"user_name": user_name, "user_id": user_id}
+
+
 async def stream_sse_response(content: str, msg_id: str):
     """Stream OpenAI-compatible SSE chunks for Hume."""
+    import asyncio
     words = content.split(' ')
     for i, word in enumerate(words):
         chunk = {
@@ -425,6 +468,7 @@ async def stream_sse_response(content: str, msg_id: str):
             }]
         }
         yield f"data: {json.dumps(chunk)}\n\n"
+        await asyncio.sleep(0.01)  # Small delay for natural streaming
 
     # Final chunk
     yield f"data: {json.dumps({'id': msg_id, 'choices': [{'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
@@ -432,16 +476,29 @@ async def stream_sse_response(content: str, msg_id: str):
 
 
 @main_app.post("/chat/completions")
-async def clm_endpoint(
-    request: Request,
-    x_user_id: str = Header(None),
-    x_user_email: str = Header(None),
-    x_user_name: str = Header(None)
-):
+async def clm_endpoint(request: Request):
     """OpenAI-compatible endpoint for Hume EVI voice interface with Zep memory."""
+    import asyncio
+    import re
+
     try:
         body = await request.json()
         messages = body.get("messages", [])
+
+        # DEBUG: Log session info
+        print(f"[CLM] === REQUEST DEBUG ===", file=sys.stderr)
+        print(f"[CLM] body keys: {list(body.keys())}", file=sys.stderr)
+        print(f"[CLM] custom_session_id: {body.get('custom_session_id')}", file=sys.stderr)
+        print(f"[CLM] customSessionId: {body.get('customSessionId')}", file=sys.stderr)
+
+        # Extract session ID (format: "userName|userId")
+        session_id = extract_session_id(request, body)
+        print(f"[CLM] Extracted session_id: {session_id}", file=sys.stderr)
+
+        parsed = parse_session_id(session_id)
+        user_name = parsed["user_name"]
+        user_id = parsed["user_id"]
+        print(f"[CLM] Parsed: name={user_name}, id={user_id}", file=sys.stderr)
 
         # Extract user message
         user_msg = ""
@@ -453,29 +510,30 @@ async def clm_endpoint(
         if not user_msg:
             user_msg = "Hello"
 
-        # Get user context from Zep if we have a user ID
+        print(f"[CLM] User message: {user_msg[:80]}...", file=sys.stderr)
+
+        # Get user context from Zep
         user_context = ""
-        user_name = x_user_name or ""
-        if x_user_id and zep_client:
-            await get_or_create_zep_user(x_user_id, x_user_email, x_user_name)
-            user_context = await get_user_context(x_user_id)
+        if user_id and zep_client:
+            try:
+                await get_or_create_zep_user(user_id, None, user_name)
+                user_context = await get_user_context(user_id)
+                print(f"[CLM] Zep context: {user_context[:100]}..." if user_context else "[CLM] No Zep context", file=sys.stderr)
+            except Exception as e:
+                print(f"[CLM] Zep error: {e}", file=sys.stderr)
 
-        # Extract name from system message if sent by Hume
-        for msg in messages:
-            if msg.get("role") == "system":
-                content = msg.get("content", "")
-                if "Name:" in content:
-                    try:
-                        user_name = content.split("Name:")[1].split("\n")[0].strip()
-                    except:
-                        pass
-
-        # Simple response logic for voice
+        # Handle "what is my name" question directly
         user_lower = user_msg.lower()
+        if any(phrase in user_lower for phrase in ['my name', 'who am i', "what's my name", 'do you know me']):
+            if user_name:
+                response_text = f"Your name is {user_name}! I remembered that from when you logged in."
+            else:
+                response_text = "I don't know your name yet. You can tell me, or sign in so I can remember you!"
+            msg_id = f"clm-{hash(user_msg) % 100000}"
+            return StreamingResponse(stream_sse_response(response_text, msg_id), media_type="text/event-stream")
 
         # Build personalized greeting
         greeting_name = f" {user_name}" if user_name else ""
-        context_hint = f" {user_context}" if user_context else ""
 
         if any(word in user_lower for word in ['stamp duty', 'calculate', 'how much', 'what would', 'property']):
             response_text = f"I can help you calculate stamp duty{greeting_name}! Just tell me the property price, location (England, Scotland, or Wales), and whether you're a first-time buyer, and I'll work out exactly what you'll pay."
@@ -483,14 +541,13 @@ async def clm_endpoint(
             response_text = "First-time buyers can save significantly! In England, you pay no stamp duty on the first £425,000. In Scotland, it's the first £175,000. Wales unfortunately doesn't have first-time buyer relief."
         elif any(word in user_lower for word in ['additional', 'second home', 'buy to let']):
             response_text = "Additional properties attract surcharges - 5% in England and Northern Ireland, 6% in Scotland, and 4% in Wales. These apply on top of the standard rates from pound zero."
-        elif any(word in user_lower for word in ['hello', 'hi', 'hey']):
+        elif any(word in user_lower for word in ['hello', 'hi', 'hey', 'speak your greeting']):
             if user_name:
                 response_text = f"Hello {user_name}! Great to chat with you. I'm your UK stamp duty calculator assistant. What property are you looking at?"
             else:
                 response_text = "Hello! I'm your UK stamp duty calculator assistant. I can help you work out stamp duty for England, Scotland, or Wales. What property are you looking at?"
         elif '£' in user_msg or any(char.isdigit() for char in user_msg):
             # Try to extract a number
-            import re
             numbers = re.findall(r'[\d,]+', user_msg.replace('£', ''))
             if numbers:
                 price = int(numbers[0].replace(',', ''))
@@ -505,9 +562,8 @@ async def clm_endpoint(
         msg_id = f"clm-{hash(user_msg) % 100000}"
 
         # Store conversation in Zep for memory (fire and forget)
-        if x_user_id and zep_client:
-            import asyncio
-            asyncio.create_task(add_conversation_to_zep(x_user_id, user_msg, response_text))
+        if user_id and zep_client:
+            asyncio.create_task(add_conversation_to_zep(user_id, user_msg, response_text))
 
         return StreamingResponse(
             stream_sse_response(response_text, msg_id),
@@ -515,6 +571,7 @@ async def clm_endpoint(
         )
 
     except Exception as e:
+        print(f"[CLM] ERROR: {e}", file=sys.stderr)
         error_response = f"Sorry, I encountered an error: {str(e)}"
         return StreamingResponse(
             stream_sse_response(error_response, "error"),
