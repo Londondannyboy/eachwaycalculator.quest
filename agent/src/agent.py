@@ -371,15 +371,25 @@ main_app.add_middleware(
 ag_ui_app = agent.to_ag_ui(deps=StateDeps(AppState()))
 
 
+# Store last CLM request for debugging
+_last_clm_request = {}
+
 # Health check
 @main_app.get("/")
 async def health():
     return {
         "status": "ok",
         "service": "stamp-duty-calculator-agent",
-        "endpoints": ["/agui/", "/chat/completions", "/user"],
+        "endpoints": ["/agui/", "/chat/completions", "/user", "/debug"],
         "zep_enabled": zep_client is not None
     }
+
+
+# Debug endpoint to see last CLM request
+@main_app.get("/debug")
+async def debug_endpoint():
+    """Returns the last CLM request for debugging what Hume sends."""
+    return _last_clm_request
 
 
 # User registration endpoint for frontend
@@ -453,6 +463,37 @@ def parse_session_id(session_id: Optional[str]) -> dict:
     return {"user_name": user_name, "user_id": user_id}
 
 
+def extract_user_from_messages(messages: list) -> dict:
+    """
+    Extract user name and id from system messages.
+    Hume may forward sessionSettings.variables as system message content.
+    Looks for patterns like:
+    - "first_name: Dan" or "name: Dan"
+    - "user_id: abc123"
+    """
+    import re
+    user_name = ""
+    user_id = ""
+
+    for msg in messages:
+        if msg.get("role") == "system":
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                # Look for first_name or name
+                match = re.search(r'\b(?:first_name|name):\s*(\w+)', content, re.IGNORECASE)
+                if match and match.group(1).lower() not in ['unknown', 'none', '']:
+                    user_name = match.group(1)
+                    print(f"[CLM] Found name in system message: {user_name}", file=sys.stderr)
+
+                # Look for user_id
+                match = re.search(r'\buser_id:\s*([^\s,]+)', content, re.IGNORECASE)
+                if match:
+                    user_id = match.group(1)
+                    print(f"[CLM] Found user_id in system message: {user_id}", file=sys.stderr)
+
+    return {"user_name": user_name, "user_id": user_id}
+
+
 async def stream_sse_response(content: str, msg_id: str):
     """Stream OpenAI-compatible SSE chunks for Hume."""
     import asyncio
@@ -481,9 +522,24 @@ async def clm_endpoint(request: Request):
     import asyncio
     import re
 
+    global _last_clm_request
+
     try:
         body = await request.json()
         messages = body.get("messages", [])
+
+        # Store for debugging
+        import time
+        _last_clm_request = {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "body_keys": list(body.keys()),
+            "custom_session_id": body.get("custom_session_id"),
+            "customSessionId": body.get("customSessionId"),
+            "session_id": body.get("session_id"),
+            "metadata": body.get("metadata", {}),
+            "headers": {k: v for k, v in request.headers.items() if "session" in k.lower() or "hume" in k.lower()},
+            "messages": [{"role": m.get("role"), "content_preview": str(m.get("content", ""))[:500]} for m in messages]
+        }
 
         # DEBUG: Log session info
         print(f"[CLM] === REQUEST DEBUG ===", file=sys.stderr)
@@ -498,7 +554,16 @@ async def clm_endpoint(request: Request):
         parsed = parse_session_id(session_id)
         user_name = parsed["user_name"]
         user_id = parsed["user_id"]
-        print(f"[CLM] Parsed: name={user_name}, id={user_id}", file=sys.stderr)
+
+        # Fallback: extract from system messages if not in session_id
+        if not user_name or not user_id:
+            msg_parsed = extract_user_from_messages(messages)
+            if not user_name and msg_parsed["user_name"]:
+                user_name = msg_parsed["user_name"]
+            if not user_id and msg_parsed["user_id"]:
+                user_id = msg_parsed["user_id"]
+
+        print(f"[CLM] Final parsed: name={user_name}, id={user_id}", file=sys.stderr)
 
         # Extract user message
         user_msg = ""
