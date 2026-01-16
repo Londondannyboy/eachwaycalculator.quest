@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { VoiceProvider, useVoice } from "@humeai/voice-react";
 
 interface VoiceInputProps {
-  onMessage: (text: string, role: "user" | "assistant") => void;
+  onMessage: (text: string, role?: "user" | "assistant") => void;
   userName?: string | null;
 }
 
@@ -38,26 +38,21 @@ function VoiceButton({ onMessage, userName }: VoiceInputProps) {
     console.log("🔊 Voice status:", status.value, error);
   }, [status, error]);
 
-  // Forward messages to CopilotKit
+  // Forward messages to parent
   useEffect(() => {
     const conversationMsgs = messages.filter(
-      (m: unknown) => {
-        const msg = m as { type?: string; message?: { content?: string } };
-        return (msg.type === "user_message" || msg.type === "assistant_message") && msg.message?.content;
-      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (m: any) => (m.type === "user_message" || m.type === "assistant_message") && m.message?.content
     );
 
     if (conversationMsgs.length > 0) {
-      const lastMsg = conversationMsgs[conversationMsgs.length - 1] as {
-        id?: string;
-        type?: string;
-        message?: { content?: string };
-      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const lastMsg = conversationMsgs[conversationMsgs.length - 1] as any;
       const msgId = lastMsg?.id || `${conversationMsgs.length}-${lastMsg?.message?.content?.slice(0, 20)}`;
 
       if (lastMsg?.message?.content && msgId !== lastSentMsgId.current) {
         const isUser = lastMsg.type === "user_message";
-        console.log(`🎤 Forwarding ${isUser ? 'user' : 'assistant'} to CopilotKit:`, lastMsg.message.content.slice(0, 50));
+        console.log(`🎤 Forwarding ${isUser ? 'user' : 'assistant'}:`, lastMsg.message.content.slice(0, 50));
         lastSentMsgId.current = msgId;
         onMessage(lastMsg.message.content, isUser ? "user" : "assistant");
       }
@@ -83,7 +78,7 @@ function VoiceButton({ onMessage, userName }: VoiceInputProps) {
 
         const { accessToken } = data;
         if (!accessToken) {
-          throw new Error("No access token returned from Hume");
+          throw new Error("No access token returned");
         }
         console.log("🎤 Got access token");
 
@@ -97,56 +92,44 @@ function VoiceButton({ onMessage, userName }: VoiceInputProps) {
         // Build greeting instruction
         let greetingInstruction = "";
         if (wasGreeted || isQuickReconnect) {
-          greetingInstruction = `DO NOT GREET - this user was already greeted. Just continue the conversation.`;
+          greetingInstruction = `DO NOT GREET - user was already greeted. Continue conversation naturally.`;
         } else {
           greetingInstruction = userName
-            ? `This is the first connection. Say "Hi ${userName}!" once, then never re-greet.`
-            : `This is the first connection. Give a brief warm greeting, then never re-greet.`;
+            ? `First connection. Say "Hi ${userName}!" once, then never re-greet.`
+            : `First connection. Give a brief warm greeting, then never re-greet.`;
         }
 
         const systemPrompt = `## YOUR ROLE
 You are a friendly UK stamp duty calculator assistant with voice capabilities.
-Help users understand how much stamp duty they'll pay when buying property in the UK.
+Help users understand how much stamp duty they'll pay when buying property.
 
-## KEY KNOWLEDGE
-- England & Northern Ireland use SDLT (Stamp Duty Land Tax)
-- Scotland uses LBTT (Land and Buildings Transaction Tax)
-- Wales uses LTT (Land Transaction Tax)
-
-## USER PROFILE
+## USER
 ${userName ? `Name: ${userName}` : 'Guest user'}
 
-## GREETING RULES
+## GREETING
 ${greetingInstruction}
 
+## KEY KNOWLEDGE
+- England & Northern Ireland: SDLT (Stamp Duty Land Tax)
+- Scotland: LBTT (Land and Buildings Transaction Tax)
+- Wales: LTT (Land Transaction Tax)
+
 ## HOW TO HELP
-1. Ask about their property purchase price if not mentioned
-2. Confirm the location (England, Scotland, or Wales)
-3. Ask if they're a first-time buyer
-4. Ask if this is an additional property (second home/buy-to-let)
-5. Use the calculateStampDuty action to compute the duty
-6. Explain the calculation breakdown clearly
-7. Offer to compare scenarios (e.g., first-time buyer vs standard)
+1. Ask about property purchase price
+2. Confirm location (England, Scotland, or Wales)
+3. Ask if first-time buyer
+4. Ask if additional property (second home/buy-to-let)
+5. Calculate and explain the duty clearly
 
-## IMPORTANT NOTES
-- First-time buyer relief in England only applies to properties up to £625,000
-- Wales does NOT offer first-time buyer relief
-- Additional properties have surcharges (3% in England, 6% ADS in Scotland)
+## NOTES
+- First-time relief in England only up to £625,000
+- Wales has NO first-time buyer relief
+- Additional properties: +5% England, +6% Scotland, +4% Wales
 
-## BEHAVIOR
-- Keep responses short for voice - 1-2 sentences unless they ask for details
-- Be accurate with tax information
-- Explain in plain English, avoid jargon
-- Confirm calculations before giving final answers`;
-
-        const customSessionId = `stamp_duty_${Date.now()}`;
+Keep responses SHORT for voice - 1-2 sentences unless details needed.`;
 
         const configId = process.env.NEXT_PUBLIC_HUME_CONFIG_ID || "6b8b3912-ce29-45c6-ab6a-0902d7278a68";
         console.log("🎤 Connecting with configId:", configId);
-
-        if (!configId) {
-          throw new Error("Missing Hume config ID");
-        }
 
         await connect({
           auth: { type: "accessToken", value: accessToken },
@@ -154,10 +137,9 @@ ${greetingInstruction}
           sessionSettings: {
             type: "session_settings",
             systemPrompt: systemPrompt,
-            customSessionId: customSessionId,
           }
         });
-        console.log("🎤 Connected successfully");
+        console.log("🎤 Connected");
 
         // Mark as greeted and trigger initial greeting
         if (!wasGreeted && !isQuickReconnect && userName) {
@@ -171,7 +153,7 @@ ${greetingInstruction}
           setSessionValue(SESSION_GREETED_KEY, true);
         }
       } catch (e) {
-        console.error("Voice connect error:", e);
+        console.error("🔴 Voice connect error:", e);
       } finally {
         setIsPending(false);
       }
@@ -224,26 +206,27 @@ ${greetingInstruction}
   );
 }
 
-// Stable callbacks for VoiceProvider
-const handleVoiceError = (err: unknown) => {
-  const error = err as { message?: string };
-  console.error("🔴 Hume Error:", error?.message || err);
-};
-const handleVoiceOpen = () => console.log("🟢 Hume connected");
-const handleVoiceClose = (e: unknown) => {
-  const event = e as { code?: string; reason?: string };
-  console.log("🟡 Hume closed:", event?.code, event?.reason);
-};
+// Stable callbacks to prevent VoiceProvider remounting
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const handleVoiceError = (err: any) => console.error("🔴 Hume Error:", err?.message || err);
+const handleVoiceOpen = () => console.log("🟢 Hume WebSocket connected");
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const handleVoiceClose = (e: any) => console.log("🟡 Hume closed:", e?.code, e?.reason);
 
-// Exported component with VoiceProvider
+// Exported component with VoiceProvider - memoized to prevent remounting
 export function VoiceInput({ onMessage, userName }: VoiceInputProps) {
+  // Memoize the button to prevent unnecessary re-renders
+  const voiceButton = useCallback(() => (
+    <VoiceButton onMessage={onMessage} userName={userName} />
+  ), [onMessage, userName]);
+
   return (
     <VoiceProvider
       onError={handleVoiceError}
       onOpen={handleVoiceOpen}
       onClose={handleVoiceClose}
     >
-      <VoiceButton onMessage={onMessage} userName={userName} />
+      {voiceButton()}
     </VoiceProvider>
   );
 }
