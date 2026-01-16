@@ -27,6 +27,7 @@ load_dotenv()
 
 # Initialize Zep client
 ZEP_API_KEY = os.environ.get("ZEP_API_KEY")
+ZEP_GRAPH_ID = "stamp_duty_calculator"
 zep_client = Zep(api_key=ZEP_API_KEY) if ZEP_API_KEY else None
 
 # ============================================================================
@@ -80,12 +81,13 @@ async def add_conversation_to_zep(user_id: str, user_msg: str, assistant_msg: st
         return
 
     try:
-        # Add as episode to user's graph
+        # Add to user's graph (creates user graph if doesn't exist)
         zep_client.graph.add(
             user_id=user_id,
             type="message",
-            data=f"User said: {user_msg}\nAssistant replied: {assistant_msg}"
+            data=f"User asked: {user_msg}\nAssistant answered: {assistant_msg}"
         )
+        print(f"Zep: Stored conversation for user {user_id[:8]}...")
     except Exception as e:
         print(f"Zep add error: {e}")
 
