@@ -24,7 +24,7 @@ export const metadata: Metadata = {
     template: "%s | Each-Way Calculator",
   },
   description:
-    "Free each-way bet calculator with AI assistant. Calculate your potential returns for horse racing, golf, and sports betting. Instant win and place payouts.",
+    "Each way calculator for UK betting - free tool to calculate your potential returns for horse racing, golf, and sports. Instant win and place payouts with AI assistant.",
   keywords: [
     "each way calculator",
     "each-way bet calculator",
@@ -49,15 +49,15 @@ export const metadata: Metadata = {
     locale: "en_GB",
     url: "https://eachwaycalculator.quest",
     siteName: "Each-Way Calculator",
-    title: "Each-Way Calculator | Free Betting Returns Calculator",
+    title: "Each Way Calculator | Free UK Betting Returns Calculator",
     description:
-      "Calculate each-way bet returns instantly. Free calculator for horse racing, golf, and sports betting. AI-powered assistance for understanding your win and place payouts.",
+      "Each way calculator for UK betting - calculate your potential returns for horse racing, golf, and sports. Free tool with AI-powered assistance for win and place payouts.",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Each-Way Calculator | Free Betting Returns",
+    title: "Each Way Calculator | Free UK Betting Returns",
     description:
-      "Free each-way bet calculator for horse racing, golf, and sports. Calculate win and place returns with AI assistance.",
+      "Each way calculator for horse racing, golf, and sports. Free UK betting tool to calculate win and place returns with AI assistance.",
   },
   robots: {
     index: true,
