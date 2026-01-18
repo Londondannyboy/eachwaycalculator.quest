@@ -336,7 +336,23 @@ When greeting or addressing the user, use their name: {state.user.name}
 Use this context to personalize your responses.
 """
 
+    # Build greeting instruction based on whether we know the user
+    if state.user and state.user.name:
+        greeting_instruction = f"""
+## CRITICAL: USER IDENTITY
+The user's name is {state.user.name}. ALWAYS address them by name!
+User ID: {state.user.id or 'Unknown'}
+
+When they ask "what is my name" or "who am I", ALWAYS respond: "Your name is {state.user.name}!"
+"""
+    else:
+        greeting_instruction = """
+## USER STATUS
+This user is not logged in. Encourage them to sign in for personalized experience.
+"""
+
     return f"""You are an expert each-way betting assistant. Help users understand each-way betting and calculate their potential returns.
+{greeting_instruction}
 {user_section}
 {memory_section}
 
@@ -793,6 +809,17 @@ async def run_agent_for_clm(user_message: str, state: AppState, conversation_his
         return ""
 
 
+def is_name_question(text: str) -> bool:
+    """Check if user is asking about their name."""
+    text_lower = text.lower().strip()
+    name_patterns = [
+        "what is my name", "what's my name", "whats my name",
+        "do you know my name", "do you know who i am",
+        "who am i", "my name", "say my name", "tell me my name"
+    ]
+    return any(p in text_lower for p in name_patterns)
+
+
 @main_app.post("/chat/completions")
 async def clm_endpoint(request: Request):
     """OpenAI-compatible CLM endpoint for Hume EVI voice."""
@@ -805,6 +832,13 @@ async def clm_endpoint(request: Request):
         body = await request.json()
         messages = body.get("messages", [])
 
+        # DEBUG: Log all session ID sources
+        print(f"[CLM] === SESSION ID DEBUG ===", file=sys.stderr)
+        print(f"[CLM] body.custom_session_id: {body.get('custom_session_id')}", file=sys.stderr)
+        print(f"[CLM] body.session_id: {body.get('session_id')}", file=sys.stderr)
+        print(f"[CLM] metadata: {body.get('metadata', {})}", file=sys.stderr)
+        print(f"[CLM] x-hume-session-id header: {request.headers.get('x-hume-session-id')}", file=sys.stderr)
+
         _last_clm_request = {
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "body_keys": list(body.keys()),
@@ -812,9 +846,12 @@ async def clm_endpoint(request: Request):
         }
 
         session_id = extract_session_id(request, body)
+        print(f"[CLM] Final extracted session_id: {session_id}", file=sys.stderr)
+
         parsed = parse_session_id(session_id)
         user_name = parsed["user_name"]
         user_id = parsed["user_id"]
+        print(f"[CLM] Parsed: name={user_name}, id={user_id}", file=sys.stderr)
 
         if not user_name or not user_id:
             msg_parsed = extract_user_from_messages(messages)
@@ -822,6 +859,7 @@ async def clm_endpoint(request: Request):
                 user_name = msg_parsed["user_name"]
             if not user_id and msg_parsed["user_id"]:
                 user_id = msg_parsed["user_id"]
+            print(f"[CLM] After message parse: name={user_name}, id={user_id}", file=sys.stderr)
 
         user_msg = ""
         for msg in reversed(messages):
@@ -832,11 +870,27 @@ async def clm_endpoint(request: Request):
         if not user_msg:
             user_msg = "Hello"
 
+        print(f"[CLM] User message: {user_msg[:80]}", file=sys.stderr)
+
+        # FAST PATH: Handle name question directly
+        if is_name_question(user_msg):
+            if user_name:
+                response_text = f"Your name is {user_name}! I remembered that from when you logged in."
+            else:
+                response_text = "I don't know your name yet. You can sign in so I can remember you!"
+            print(f"[CLM] Fast path name response: {response_text}", file=sys.stderr)
+            msg_id = f"clm-{hash(user_msg) % 100000}"
+            return StreamingResponse(
+                stream_sse_response(response_text, msg_id),
+                media_type="text/event-stream"
+            )
+
         zep_context = ""
         if user_id and zep_client:
             try:
                 await get_or_create_zep_user(user_id, None, user_name)
                 zep_context = await get_user_context(user_id)
+                print(f"[CLM] Zep context: {zep_context[:100] if zep_context else 'none'}", file=sys.stderr)
             except Exception as e:
                 print(f"[CLM] Zep error: {e}", file=sys.stderr)
 
@@ -862,6 +916,8 @@ async def clm_endpoint(request: Request):
                 response_text = f"Hi {user_name}! I can help you calculate each-way bet returns. What's your stake and odds?"
             else:
                 response_text = "Hi! I can help you calculate each-way bet returns. Tell me your stake and odds."
+
+        print(f"[CLM] Response: {response_text[:80]}", file=sys.stderr)
 
         if user_id and zep_client and user_msg:
             asyncio.create_task(add_conversation_to_zep(user_id, user_msg, response_text))
