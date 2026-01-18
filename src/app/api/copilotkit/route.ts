@@ -12,7 +12,7 @@ const serviceAdapter = new ExperimentalEmptyAdapter();
 // Create CopilotRuntime with HttpAgent pointing to our Pydantic AI agent
 const runtime = new CopilotRuntime({
   agents: {
-    stamp_duty_agent: new HttpAgent({
+    each_way_agent: new HttpAgent({
       url: process.env.AGENT_URL
         ? `${process.env.AGENT_URL}/agui/`
         : "http://localhost:8000/agui/",
