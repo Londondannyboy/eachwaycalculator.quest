@@ -307,7 +307,8 @@ class AppState(BaseModel):
 # Create the agent
 agent = Agent(
     model=GoogleModel('gemini-2.0-flash'),
-    deps_type=StateDeps[AppState]
+    deps_type=StateDeps[AppState],
+    name="each_way_agent"
 )
 
 
