@@ -1,4 +1,4 @@
-export { SDLTRatesChart } from "./SDLTRatesChart";
-export { RegionComparisonChart } from "./RegionComparisonChart";
-export { CalculationBreakdown } from "./CalculationBreakdown";
-export { InfoBox } from "./InfoBox";
+// Each Way Calculator Charts
+export { ReturnsBreakdown } from "./ReturnsBreakdown";
+export { OddsComparison } from "./OddsComparison";
+export { EachWayExplainer } from "./EachWayExplainer";

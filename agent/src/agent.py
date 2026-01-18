@@ -1,5 +1,5 @@
 """
-UK Stamp Duty Calculator Agent
+Each-Way Calculator Agent
 Pydantic AI agent with AG-UI and CLM endpoints for CopilotKit and Hume Voice.
 Integrates with Zep for user memory and knowledge graphs.
 """
@@ -32,7 +32,7 @@ load_dotenv()
 
 # Initialize Zep client
 ZEP_API_KEY = os.environ.get("ZEP_API_KEY")
-ZEP_GRAPH_ID = "stamp_duty_calculator"
+ZEP_GRAPH_ID = "each_way_calculator"
 zep_client = Zep(api_key=ZEP_API_KEY) if ZEP_API_KEY else None
 
 # Initialize Neon database
@@ -102,138 +102,183 @@ async def add_conversation_to_zep(user_id: str, user_msg: str, assistant_msg: st
 
 
 # ============================================================================
-# STAMP DUTY CALCULATION LOGIC
+# EACH-WAY CALCULATION LOGIC
 # ============================================================================
 
-# England/NI SDLT Rates (2024/25)
-ENGLAND_STANDARD_BANDS = [
-    (250000, 0.0),      # 0% up to £250,000
-    (925000, 0.05),     # 5% £250,001 to £925,000
-    (1500000, 0.10),    # 10% £925,001 to £1,500,000
-    (float('inf'), 0.12) # 12% above £1,500,000
+# Each-way terms (place odds fraction)
+EACH_WAY_TERMS = {
+    "1/4": 0.25,
+    "1/5": 0.2,
+    "1/6": 1/6,
+    "1/8": 0.125
+}
+
+# Standard horse racing place rules
+HORSE_RACING_RULES = [
+    {"runners": "2-4", "places": 1, "terms": "1/4", "description": "Win only"},
+    {"runners": "5-7", "places": 2, "terms": "1/4", "description": "1st & 2nd at 1/4 odds"},
+    {"runners": "8+", "places": 3, "terms": "1/5", "description": "1st, 2nd & 3rd at 1/5 odds"},
+    {"runners": "12-15 handicap", "places": 3, "terms": "1/4", "description": "1st, 2nd & 3rd at 1/4 odds"},
+    {"runners": "16+ handicap", "places": 4, "terms": "1/4", "description": "1st-4th at 1/4 odds"},
 ]
 
-ENGLAND_FIRST_TIME_BANDS = [
-    (425000, 0.0),      # 0% up to £425,000 (first-time buyers)
-    (625000, 0.05),     # 5% £425,001 to £625,000
-]
 
-ENGLAND_ADDITIONAL_SURCHARGE = 0.05  # 5% surcharge on additional properties (increased from 3%)
-
-# Scotland LBTT Rates
-SCOTLAND_STANDARD_BANDS = [
-    (145000, 0.0),      # 0% up to £145,000
-    (250000, 0.02),     # 2% £145,001 to £250,000
-    (325000, 0.05),     # 5% £250,001 to £325,000
-    (750000, 0.10),     # 10% £325,001 to £750,000
-    (float('inf'), 0.12) # 12% above £750,000
-]
-
-SCOTLAND_FIRST_TIME_BANDS = [
-    (175000, 0.0),      # 0% up to £175,000 (first-time buyers)
-    (250000, 0.02),
-    (325000, 0.05),
-    (750000, 0.10),
-    (float('inf'), 0.12)
-]
-
-SCOTLAND_ADS = 0.06  # Additional Dwelling Supplement
-
-# Wales LTT Rates
-WALES_STANDARD_BANDS = [
-    (225000, 0.0),      # 0% up to £225,000
-    (400000, 0.06),     # 6% £225,001 to £400,000
-    (750000, 0.075),    # 7.5% £400,001 to £750,000
-    (1500000, 0.10),    # 10% £750,001 to £1,500,000
-    (float('inf'), 0.12) # 12% above £1,500,000
-]
-
-WALES_HIGHER_RATES_SURCHARGE = 0.04  # 4% surcharge for additional properties
+def fractional_to_decimal(numerator: int, denominator: int) -> float:
+    """Convert fractional odds to decimal."""
+    return numerator / denominator + 1
 
 
-def calculate_stamp_duty(
-    price: float,
-    region: str,
-    buyer_type: str
+def decimal_to_fractional(decimal: float) -> str:
+    """Convert decimal odds to fractional string."""
+    fraction = decimal - 1
+
+    # Common fractions lookup
+    common = {
+        0.5: "1/2", 0.25: "1/4", 0.2: "1/5", 0.33: "1/3",
+        1.0: "Evens", 2.0: "2/1", 3.0: "3/1", 4.0: "4/1",
+        5.0: "5/1", 6.0: "6/1", 7.0: "7/1", 8.0: "8/1",
+        9.0: "9/1", 10.0: "10/1", 1.5: "3/2", 2.5: "5/2"
+    }
+
+    key = round(fraction, 2)
+    if key in common:
+        return common[key]
+
+    # Approximate
+    for d in range(1, 11):
+        n = round(fraction * d)
+        if abs(fraction - n/d) < 0.01:
+            return f"{n}/{d}"
+    return f"{fraction:.2f}/1"
+
+
+def calculate_each_way(
+    stake: float,
+    odds_numerator: int,
+    odds_denominator: int,
+    each_way_terms: str = "1/4",
+    number_of_places: int = 3,
+    outcome: str = "won"
 ) -> dict:
     """
-    Calculate UK stamp duty based on price, region, and buyer type.
+    Calculate each-way bet returns.
 
     Args:
-        price: Property purchase price in GBP
-        region: 'england', 'scotland', or 'wales'
-        buyer_type: 'standard', 'first-time', or 'additional'
+        stake: Stake per part in GBP (total stake = stake * 2)
+        odds_numerator: Numerator of fractional odds (e.g., 5 for 5/1)
+        odds_denominator: Denominator of fractional odds (e.g., 1 for 5/1)
+        each_way_terms: Place odds fraction ('1/4', '1/5', '1/6', '1/8')
+        number_of_places: How many places pay out (2, 3, 4, 5)
+        outcome: 'won', 'placed', or 'lost'
 
     Returns:
-        Dict with total_tax, effective_rate, and breakdown
+        Dict with all calculation details
     """
-    region = region.lower()
-    buyer_type = buyer_type.lower()
+    # Total stake
+    total_stake = stake * 2
 
-    # Select appropriate bands and surcharge
-    if region == 'england':
-        if buyer_type == 'first-time' and price <= 625000:
-            bands = ENGLAND_FIRST_TIME_BANDS
-            surcharge = 0.0
-        elif buyer_type == 'additional':
-            bands = ENGLAND_STANDARD_BANDS
-            surcharge = ENGLAND_ADDITIONAL_SURCHARGE
-        else:
-            bands = ENGLAND_STANDARD_BANDS
-            surcharge = 0.0
+    # Win odds
+    win_odds_decimal = fractional_to_decimal(odds_numerator, odds_denominator)
+    win_odds_fractional = f"{odds_numerator}/{odds_denominator}"
 
-    elif region == 'scotland':
-        if buyer_type == 'first-time':
-            bands = SCOTLAND_FIRST_TIME_BANDS
-            surcharge = 0.0
-        elif buyer_type == 'additional':
-            bands = SCOTLAND_STANDARD_BANDS
-            surcharge = SCOTLAND_ADS
-        else:
-            bands = SCOTLAND_STANDARD_BANDS
-            surcharge = 0.0
+    # Place odds
+    ew_fraction = EACH_WAY_TERMS.get(each_way_terms, 0.25)
+    place_odds_decimal = (win_odds_decimal - 1) * ew_fraction + 1
+    place_odds_fractional = decimal_to_fractional(place_odds_decimal)
 
-    elif region == 'wales':
-        # Wales doesn't have first-time buyer relief
-        bands = WALES_STANDARD_BANDS
-        surcharge = WALES_HIGHER_RATES_SURCHARGE if buyer_type == 'additional' else 0.0
+    # Returns if WON (both parts pay)
+    win_bet_return = stake * win_odds_decimal
+    win_bet_profit = win_bet_return - stake
+    place_bet_return_if_won = stake * place_odds_decimal
+    place_bet_profit_if_won = place_bet_return_if_won - stake
+    total_return_if_won = win_bet_return + place_bet_return_if_won
+    total_profit_if_won = total_return_if_won - total_stake
 
-    else:
-        return {"error": f"Unknown region: {region}. Use 'england', 'scotland', or 'wales'."}
+    # Returns if PLACED ONLY
+    place_bet_return_if_placed = stake * place_odds_decimal
+    place_bet_profit_if_placed = place_bet_return_if_placed - stake
+    total_return_if_placed = place_bet_return_if_placed
+    total_profit_if_placed = total_return_if_placed - total_stake
 
-    # Calculate tax for each band
-    breakdown = []
-    total_tax = 0.0
-    previous_threshold = 0
-
-    for threshold, rate in bands:
-        if price > previous_threshold:
-            taxable_in_band = min(price, threshold) - previous_threshold
-            if taxable_in_band > 0:
-                effective_rate = rate + surcharge
-                tax_in_band = taxable_in_band * effective_rate
-                total_tax += tax_in_band
-
-                breakdown.append({
-                    "band": f"£{previous_threshold:,.0f} - £{threshold:,.0f}" if threshold != float('inf') else f"Above £{previous_threshold:,.0f}",
-                    "rate": f"{effective_rate * 100:.1f}%",
-                    "taxable_amount": taxable_in_band,
-                    "tax_due": tax_in_band
-                })
-
-        previous_threshold = threshold
-        if price <= threshold:
-            break
-
-    effective_rate = (total_tax / price * 100) if price > 0 else 0
+    # Actual result based on outcome
+    if outcome == "won":
+        actual_return = total_return_if_won
+        actual_profit = total_profit_if_won
+    elif outcome == "placed":
+        actual_return = total_return_if_placed
+        actual_profit = total_profit_if_placed
+    else:  # lost
+        actual_return = 0
+        actual_profit = -total_stake
 
     return {
-        "purchase_price": price,
-        "region": region.title(),
-        "buyer_type": buyer_type.replace('-', ' ').title(),
-        "total_tax": round(total_tax, 2),
-        "effective_rate": round(effective_rate, 2),
-        "breakdown": breakdown
+        "stake_per_part": stake,
+        "total_stake": total_stake,
+        "win_odds": win_odds_fractional,
+        "win_odds_decimal": round(win_odds_decimal, 2),
+        "place_odds": place_odds_fractional,
+        "place_odds_decimal": round(place_odds_decimal, 2),
+        "each_way_terms": each_way_terms,
+        "places_paying": number_of_places,
+        "return_if_won": round(total_return_if_won, 2),
+        "profit_if_won": round(total_profit_if_won, 2),
+        "return_if_placed": round(total_return_if_placed, 2),
+        "profit_if_placed": round(total_profit_if_placed, 2),
+        "total_loss": round(total_stake, 2),
+        "actual_return": round(actual_return, 2),
+        "actual_profit": round(actual_profit, 2),
+        "outcome": outcome,
+        "breakdown": {
+            "win_bet": {
+                "stake": stake,
+                "odds": win_odds_fractional,
+                "return_if_wins": round(win_bet_return, 2),
+                "profit_if_wins": round(win_bet_profit, 2)
+            },
+            "place_bet": {
+                "stake": stake,
+                "odds": place_odds_fractional,
+                "return_if_places": round(place_bet_return_if_won, 2),
+                "profit_if_places": round(place_bet_profit_if_won, 2)
+            }
+        }
+    }
+
+
+def compare_each_way_vs_win(
+    stake: float,
+    odds_numerator: int,
+    odds_denominator: int,
+    each_way_terms: str = "1/4",
+    number_of_places: int = 3
+) -> dict:
+    """Compare each-way bet vs win-only bet with same total stake."""
+    ew_result = calculate_each_way(stake, odds_numerator, odds_denominator, each_way_terms, number_of_places)
+
+    # Win only with same total stake
+    win_only_stake = stake * 2
+    win_odds_decimal = fractional_to_decimal(odds_numerator, odds_denominator)
+    win_only_return = win_only_stake * win_odds_decimal
+    win_only_profit = win_only_return - win_only_stake
+
+    return {
+        "total_stake": ew_result["total_stake"],
+        "odds": f"{odds_numerator}/{odds_denominator}",
+        "each_way": {
+            "return_if_won": ew_result["return_if_won"],
+            "profit_if_won": ew_result["profit_if_won"],
+            "return_if_placed": ew_result["return_if_placed"],
+            "profit_if_placed": ew_result["profit_if_placed"],
+            "loss": ew_result["total_loss"]
+        },
+        "win_only": {
+            "stake": win_only_stake,
+            "return_if_won": round(win_only_return, 2),
+            "profit_if_won": round(win_only_profit, 2),
+            "return_if_placed": 0,
+            "profit_if_placed": -win_only_stake,
+            "loss": win_only_stake
+        }
     }
 
 
@@ -250,9 +295,10 @@ class UserProfile(BaseModel):
 
 class AppState(BaseModel):
     """Shared state between frontend and agent."""
-    current_price: float = 0
-    current_region: str = "england"
-    current_buyer_type: str = "standard"
+    current_stake: float = 10
+    current_odds: str = "5/1"
+    current_terms: str = "1/4"
+    current_places: int = 3
     last_calculation: Optional[dict] = None
     user: Optional[UserProfile] = None
     zep_context: str = ""
@@ -289,130 +335,174 @@ When greeting or addressing the user, use their name: {state.user.name}
 Use this context to personalize your responses.
 """
 
-    return f"""You are an expert UK stamp duty assistant. Help users understand their stamp duty obligations when buying property in the UK.
+    return f"""You are an expert each-way betting assistant. Help users understand each-way betting and calculate their potential returns.
 {user_section}
 {memory_section}
 
 ## KEY KNOWLEDGE
-- **England & Northern Ireland**: SDLT (Stamp Duty Land Tax)
-  - Standard: 0% up to £250k, 5% to £925k, 10% to £1.5M, 12% above
-  - First-time buyers: 0% up to £425k, 5% to £625k (only if total price ≤ £625k)
-  - Additional properties: +5% surcharge on all bands
 
-- **Scotland**: LBTT (Land and Buildings Transaction Tax)
-  - Standard: 0% to £145k, 2% to £250k, 5% to £325k, 10% to £750k, 12% above
-  - First-time buyers: 0% to £175k, then standard rates
-  - Additional properties: +6% ADS (Additional Dwelling Supplement)
+### What is an Each-Way Bet?
+- An each-way bet is TWO bets in one: a WIN bet and a PLACE bet
+- The total stake is DOUBLED (e.g., £10 each-way = £20 total)
+- If the selection WINS: both win and place bets pay out
+- If the selection PLACES only: only the place bet pays out
+- If the selection LOSES: you lose the entire stake
 
-- **Wales**: LTT (Land Transaction Tax)
-  - Standard: 0% to £225k, 6% to £400k, 7.5% to £750k, 10% to £1.5M, 12% above
-  - NO first-time buyer relief in Wales
-  - Additional properties: +4% surcharge
+### Place Odds
+- Place bets pay at a fraction of the win odds
+- 1/4 odds: Common for 5-7 runners
+- 1/5 odds: Common for 8+ runners
+- 1/4 odds: Handicaps with 12+ runners
+
+### Standard Horse Racing Terms
+- 5-7 runners: 2 places at 1/4 odds
+- 8+ runners: 3 places at 1/5 odds
+- 12-15 handicap: 3 places at 1/4 odds
+- 16+ handicap: 4 places at 1/4 odds
 
 ## TOOLS AVAILABLE
 
 ### Calculation Tools
-- `calculate_stamp_duty_tool`: Calculate stamp duty for a specific scenario
-- `compare_buyer_types`: Compare costs across different buyer types
+- `calculate_each_way_bet`: Calculate each-way returns
+- `compare_each_way_vs_win_only`: Compare E/W vs win-only bet
+- `explain_each_way_terms`: Explain how each-way betting works
 
 ### User Profile & Memory Tools
-- `get_user_profile`: Get user's saved preferences and calculation history
-- `save_user_preference`: Save user preferences (region, buyer_type, price_range)
-- `save_calculation`: Save a calculation to user's history
-- `get_zep_memory`: Get what you remember about the user from past conversations
+- `get_user_profile`: Get user's saved preferences
+- `save_user_preference`: Save betting preferences
+- `get_zep_memory`: Get what you remember about the user
 
 ## BEHAVIOR
 
 ### When calculating:
-1. When user mentions a price/location, use calculate_stamp_duty_tool immediately
-2. Always explain the breakdown clearly
-3. Offer to compare scenarios
-4. After calculating, offer to save it: "Want me to save this calculation?"
+1. Ask for stake and odds if not provided
+2. Use calculate_each_way_bet immediately when you have the info
+3. Always explain both WIN and PLACE scenarios clearly
+4. Mention if they'll profit or lose overall if just placed
 
-### When user shares preferences:
-- "I'm a first-time buyer" → save_user_preference("buyer_type", "first-time")
-- "I'm looking in Scotland" → save_user_preference("preferred_region", "scotland")
-- "My budget is around 500k" → save_user_preference("price_range", "500000")
-
-### When user asks about their profile:
-- "What do you know about me?" → get_user_profile()
-- "What do you remember?" → get_zep_memory()
-- "My past calculations" → get_user_profile() and show calculation_history
+### Example response format:
+"For a £10 each-way bet at 5/1 (1/4 odds, 3 places):
+- Total stake: £20
+- If WINS: Return £82.50, Profit £62.50
+- If PLACES: Return £22.50, Loss £7.50 overall
+- If LOSES: Loss £20"
 
 ### Important:
-- Be concise but accurate
-- Mention important caveats (e.g., first-time buyer £625k limit)
+- Be concise and clear
+- Always mention the total stake (doubled)
 - Use the user's name when you know it
-- Reference their saved preferences when relevant
+- Remind users to gamble responsibly
 """
 
 
 @agent.tool
-async def calculate_stamp_duty_tool(
+async def calculate_each_way_bet(
     ctx: RunContext[StateDeps[AppState]],
-    purchase_price: float,
-    region: str,
-    buyer_type: str
+    stake: float,
+    odds_numerator: int,
+    odds_denominator: int,
+    each_way_terms: str = "1/4",
+    number_of_places: int = 3,
+    outcome: str = "won"
 ) -> dict:
     """
-    Calculate UK stamp duty for a property purchase.
+    Calculate each-way bet returns.
 
     Args:
-        purchase_price: Property price in GBP (pounds)
-        region: 'england' (includes NI), 'scotland', or 'wales'
-        buyer_type: 'standard', 'first-time', or 'additional'
+        stake: Stake per part in GBP (e.g., 10 means £10 each way = £20 total)
+        odds_numerator: Numerator of fractional odds (e.g., 5 for 5/1)
+        odds_denominator: Denominator of fractional odds (e.g., 1 for 5/1, 2 for 5/2)
+        each_way_terms: Place odds fraction: '1/4', '1/5', '1/6', or '1/8'
+        number_of_places: How many places pay out (2, 3, 4, or 5)
+        outcome: 'won', 'placed', or 'lost' (for actual result)
 
     Returns:
-        Calculation result with total tax, effective rate, and breakdown
+        Full calculation with returns for all scenarios
     """
-    result = calculate_stamp_duty(purchase_price, region, buyer_type)
+    result = calculate_each_way(
+        stake, odds_numerator, odds_denominator,
+        each_way_terms, number_of_places, outcome
+    )
 
     # Update state
-    ctx.deps.state.current_price = purchase_price
-    ctx.deps.state.current_region = region
-    ctx.deps.state.current_buyer_type = buyer_type
+    ctx.deps.state.current_stake = stake
+    ctx.deps.state.current_odds = f"{odds_numerator}/{odds_denominator}"
+    ctx.deps.state.current_terms = each_way_terms
+    ctx.deps.state.current_places = number_of_places
     ctx.deps.state.last_calculation = result
 
     return result
 
 
 @agent.tool
-async def compare_buyer_types(
+async def compare_each_way_vs_win_only(
     ctx: RunContext[StateDeps[AppState]],
-    purchase_price: float,
-    region: str
+    stake: float,
+    odds_numerator: int,
+    odds_denominator: int,
+    each_way_terms: str = "1/4",
+    number_of_places: int = 3
 ) -> dict:
     """
-    Compare stamp duty across all buyer types for a given price and region.
+    Compare each-way bet vs win-only bet with same total stake.
 
     Args:
-        purchase_price: Property price in GBP
-        region: 'england', 'scotland', or 'wales'
+        stake: Stake per part for E/W (total compared = stake * 2)
+        odds_numerator: Numerator of fractional odds
+        odds_denominator: Denominator of fractional odds
+        each_way_terms: Place odds fraction
+        number_of_places: How many places pay out
 
     Returns:
-        Comparison of standard, first-time, and additional property costs
+        Side-by-side comparison of E/W vs win-only
     """
-    buyer_types = ['standard', 'first-time', 'additional']
-    comparisons = []
+    return compare_each_way_vs_win(
+        stake, odds_numerator, odds_denominator,
+        each_way_terms, number_of_places
+    )
 
-    for bt in buyer_types:
-        result = calculate_stamp_duty(purchase_price, region, bt)
-        comparisons.append({
-            "buyer_type": bt.replace('-', ' ').title(),
-            "total_tax": result["total_tax"],
-            "effective_rate": result["effective_rate"]
-        })
 
-    # Calculate savings
-    standard_tax = comparisons[0]["total_tax"]
-    first_time_tax = comparisons[1]["total_tax"]
-    savings = standard_tax - first_time_tax if first_time_tax < standard_tax else 0
+@agent.tool
+async def explain_each_way_terms(ctx: RunContext[StateDeps[AppState]]) -> dict:
+    """
+    Explain how each-way betting works and standard terms.
+    Call this when user asks about each-way betting basics.
 
+    Returns:
+        Detailed explanation of each-way betting
+    """
     return {
-        "purchase_price": purchase_price,
-        "region": region.title(),
-        "comparisons": comparisons,
-        "first_time_buyer_savings": savings
+        "explanation": """EACH-WAY BETTING EXPLAINED:
+
+An each-way bet is TWO bets in one:
+1. A WIN bet - your selection must WIN
+2. A PLACE bet - your selection must finish in the places
+
+Your total stake is DOUBLED. £10 each-way = £20 total.
+
+PLACE ODDS:
+- 1/4 odds means place pays 25% of win odds
+- 1/5 odds means place pays 20% of win odds
+
+EXAMPLE: £10 E/W at 5/1 (1/4 odds):
+- Total stake: £20
+- Win odds: 5/1 (decimal 6.0)
+- Place odds: 5/4 (decimal 2.25)
+
+If WINS:
+- Win bet: £10 × 6.0 = £60
+- Place bet: £10 × 2.25 = £22.50
+- Total: £82.50 (£62.50 profit)
+
+If PLACES only:
+- Win bet: £0 (loses)
+- Place bet: £10 × 2.25 = £22.50
+- Total: £22.50 (£7.50 loss overall)
+
+If LOSES:
+- Total: £0 (£20 loss)""",
+        "horse_racing_terms": HORSE_RACING_RULES,
+        "terms_fractions": EACH_WAY_TERMS
     }
 
 
@@ -423,58 +513,41 @@ async def compare_buyer_types(
 @agent.tool
 async def get_user_profile(ctx: RunContext[StateDeps[AppState]]) -> dict:
     """
-    Get the current user's profile information from Neon database and Zep memory.
-    Call this when user asks 'what do you know about me', 'my profile', 'my preferences', etc.
-
-    Returns their name, saved preferences (region, buyer type), and any Zep memory facts.
+    Get the current user's profile and preferences.
+    Call this when user asks 'what do you know about me'.
     """
     state = ctx.deps.state
     user = state.user
 
     if not user or not user.id:
-        return {"logged_in": False, "message": "User is not logged in. Sign in to save your preferences."}
+        return {"logged_in": False, "message": "User is not logged in."}
 
     profile = {
         "logged_in": True,
         "user_id": user.id,
         "name": user.name or "Unknown",
         "preferences": {},
-        "calculation_history": [],
         "zep_facts": []
     }
 
-    # Fetch from Neon database
+    # Fetch from database if available
     if DATABASE_URL:
         try:
             conn = psycopg2.connect(DATABASE_URL)
             cur = conn.cursor()
-
-            # Get user preferences
             cur.execute("""
-                SELECT item_type, value, metadata, created_at
-                FROM user_profile_items
-                WHERE user_id = %s
-                ORDER BY created_at DESC
+                SELECT item_type, value FROM user_profile_items
+                WHERE user_id = %s ORDER BY created_at DESC
             """, (user.id,))
             items = cur.fetchall()
-
-            for item_type, value, metadata, created_at in items:
-                if item_type in ['preferred_region', 'buyer_type', 'price_range']:
-                    profile["preferences"][item_type] = value
-                elif item_type == 'calculation':
-                    profile["calculation_history"].append({
-                        "value": value,
-                        "metadata": metadata,
-                        "date": str(created_at)
-                    })
-
+            for item_type, value in items:
+                profile["preferences"][item_type] = value
             cur.close()
             conn.close()
-            print(f"[TOOL] get_user_profile: Found {len(items)} items for user {user.id[:8]}...", file=sys.stderr)
         except Exception as e:
-            print(f"[TOOL] get_user_profile DB error: {e}", file=sys.stderr)
+            print(f"[TOOL] get_user_profile error: {e}", file=sys.stderr)
 
-    # Fetch Zep memory facts
+    # Fetch Zep facts
     if zep_client and user.id:
         try:
             context = zep_client.user.get_context(user.id, min_score=0.5)
@@ -493,166 +566,46 @@ async def save_user_preference(
     value: str
 ) -> dict:
     """
-    Save a user preference to their profile in Neon database.
-
-    Use this when user mentions their preferences:
-    - "I'm a first-time buyer" → save_user_preference("buyer_type", "first-time")
-    - "I'm looking in Scotland" → save_user_preference("preferred_region", "scotland")
-    - "My budget is 500k" → save_user_preference("price_range", "500000")
+    Save a user preference.
 
     Args:
-        preference_type: One of 'preferred_region', 'buyer_type', 'price_range'
+        preference_type: 'default_stake', 'preferred_terms', 'favorite_sport'
         value: The value to save
 
     Returns:
-        Confirmation of saved preference
+        Confirmation
     """
     state = ctx.deps.state
     user = state.user
 
     if not user or not user.id:
-        return {"saved": False, "message": "User not logged in. Sign in to save preferences."}
+        return {"saved": False, "message": "User not logged in."}
 
     if not DATABASE_URL:
         return {"saved": False, "message": "Database not configured"}
 
-    # Normalize values
-    VALID_REGIONS = ['england', 'scotland', 'wales']
-    VALID_BUYER_TYPES = ['standard', 'first-time', 'additional']
-
-    normalized_value = value.lower().strip()
-
-    if preference_type == "preferred_region":
-        if normalized_value not in VALID_REGIONS:
-            return {"saved": False, "error": f"Invalid region. Use: {', '.join(VALID_REGIONS)}"}
-        normalized_value = normalized_value.title()
-
-    elif preference_type == "buyer_type":
-        # Handle variations
-        if 'first' in normalized_value:
-            normalized_value = 'first-time'
-        elif 'additional' in normalized_value or 'second' in normalized_value:
-            normalized_value = 'additional'
-        else:
-            normalized_value = 'standard'
-
-    elif preference_type == "price_range":
-        # Extract number from price
-        import re
-        numbers = re.findall(r'[\d,]+', normalized_value.replace('£', ''))
-        if numbers:
-            normalized_value = numbers[0].replace(',', '')
-
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
-
-        # Check for existing preference of same type
         cur.execute("""
-            SELECT id, value FROM user_profile_items
-            WHERE user_id = %s AND item_type = %s
-            LIMIT 1
-        """, (user.id, preference_type))
-        existing = cur.fetchone()
-
-        old_value = None
-        if existing:
-            old_value = existing[1]
-            # Delete old value (single-value fields)
-            cur.execute("""
-                DELETE FROM user_profile_items
-                WHERE user_id = %s AND item_type = %s
-            """, (user.id, preference_type))
-
-        # Insert new value
-        cur.execute("""
-            INSERT INTO user_profile_items (user_id, item_type, value, metadata, confirmed)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO user_profile_items (user_id, item_type, value, confirmed)
+            VALUES (%s, %s, %s, TRUE)
             ON CONFLICT (user_id, item_type, value) DO UPDATE SET updated_at = NOW()
-            RETURNING id
-        """, (user.id, preference_type, normalized_value, '{"source": "voice"}', True))
-
+        """, (user.id, preference_type, value))
         conn.commit()
         cur.close()
         conn.close()
-
-        print(f"[TOOL] save_user_preference: {preference_type}={normalized_value} for user {user.id[:8]}...", file=sys.stderr)
-
-        if old_value:
-            return {"saved": True, "preference": preference_type, "value": normalized_value, "replaced": old_value}
-        return {"saved": True, "preference": preference_type, "value": normalized_value}
-
+        return {"saved": True, "preference": preference_type, "value": value}
     except Exception as e:
         print(f"[TOOL] save_user_preference error: {e}", file=sys.stderr)
         return {"saved": False, "error": str(e)}
 
 
 @agent.tool
-async def save_calculation(
-    ctx: RunContext[StateDeps[AppState]],
-    price: float,
-    region: str,
-    buyer_type: str,
-    stamp_duty: float
-) -> dict:
-    """
-    Save a stamp duty calculation to the user's history.
-    Call this AFTER calculating stamp duty to save it for the user.
-
-    Args:
-        price: Property price
-        region: Region (england, scotland, wales)
-        buyer_type: Buyer type (standard, first-time, additional)
-        stamp_duty: Calculated stamp duty amount
-
-    Returns:
-        Confirmation of saved calculation
-    """
-    state = ctx.deps.state
-    user = state.user
-
-    if not user or not user.id:
-        return {"saved": False, "message": "User not logged in"}
-
-    if not DATABASE_URL:
-        return {"saved": False, "message": "Database not configured"}
-
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-
-        metadata = json.dumps({
-            "price": price,
-            "region": region,
-            "buyer_type": buyer_type,
-            "stamp_duty": stamp_duty,
-            "source": "voice"
-        })
-
-        cur.execute("""
-            INSERT INTO user_profile_items (user_id, item_type, value, metadata, confirmed)
-            VALUES (%s, 'calculation', %s, %s, TRUE)
-        """, (user.id, f"£{price:,.0f} in {region.title()}", metadata))
-
-        conn.commit()
-        cur.close()
-        conn.close()
-
-        print(f"[TOOL] save_calculation: £{price:,.0f} {region} for user {user.id[:8]}...", file=sys.stderr)
-        return {"saved": True, "calculation": f"£{price:,.0f} property in {region.title()}"}
-
-    except Exception as e:
-        print(f"[TOOL] save_calculation error: {e}", file=sys.stderr)
-        return {"saved": False, "error": str(e)}
-
-
-@agent.tool
 async def get_zep_memory(ctx: RunContext[StateDeps[AppState]]) -> dict:
     """
-    Get what the AI remembers about the user from Zep knowledge graph.
-    Call this when user asks 'what do you remember', 'what do you know about me'.
-
-    Returns facts extracted from past conversations.
+    Get what the AI remembers about the user.
+    Call this when user asks 'what do you remember'.
     """
     state = ctx.deps.state
     user = state.user
@@ -667,15 +620,9 @@ async def get_zep_memory(ctx: RunContext[StateDeps[AppState]]) -> dict:
         context = zep_client.user.get_context(user.id, min_score=0.3)
         if context and context.facts:
             facts = [{"fact": f.fact, "score": f.score} for f in context.facts[:10]]
-            return {
-                "has_memory": True,
-                "user_id": user.id,
-                "facts_count": len(facts),
-                "facts": facts
-            }
-        return {"has_memory": True, "facts_count": 0, "message": "No memories yet. Keep chatting!"}
+            return {"has_memory": True, "facts": facts}
+        return {"has_memory": True, "facts_count": 0, "message": "No memories yet."}
     except Exception as e:
-        print(f"[TOOL] get_zep_memory error: {e}", file=sys.stderr)
         return {"has_memory": False, "error": str(e)}
 
 
@@ -683,10 +630,8 @@ async def get_zep_memory(ctx: RunContext[StateDeps[AppState]]) -> dict:
 # FASTAPI APP WITH AG-UI AND CLM ENDPOINTS
 # ============================================================================
 
-# Create main FastAPI app
-main_app = FastAPI(title="Stamp Duty Calculator Agent")
+main_app = FastAPI(title="Each-Way Calculator Agent")
 
-# Add CORS middleware
 main_app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -695,35 +640,29 @@ main_app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create AG-UI app from agent
 ag_ui_app = agent.to_ag_ui(deps=StateDeps(AppState()))
 
-
-# Store last CLM request for debugging
 _last_clm_request = {}
 
-# Health check
+
 @main_app.get("/")
 async def health():
     return {
         "status": "ok",
-        "service": "stamp-duty-calculator-agent",
+        "service": "each-way-calculator-agent",
         "endpoints": ["/agui/", "/chat/completions", "/user", "/debug"],
         "zep_enabled": zep_client is not None
     }
 
 
-# Debug endpoint to see last CLM request
 @main_app.get("/debug")
 async def debug_endpoint():
-    """Returns the last CLM request for debugging what Hume sends."""
     return _last_clm_request
 
 
-# User registration endpoint for frontend
 @main_app.post("/user")
 async def register_user(request: Request):
-    """Register or update a user in Zep for memory tracking."""
+    """Register or update a user in Zep."""
     if not zep_client:
         return {"status": "zep_not_configured"}
 
@@ -737,11 +676,7 @@ async def register_user(request: Request):
             return {"error": "user_id required"}, 400
 
         user = await get_or_create_zep_user(user_id, email, name)
-        return {
-            "status": "ok",
-            "user_id": user_id,
-            "zep_user": user is not None
-        }
+        return {"status": "ok", "user_id": user_id, "zep_user": user is not None}
     except Exception as e:
         return {"error": str(e)}
 
@@ -751,19 +686,15 @@ async def register_user(request: Request):
 # ============================================================================
 
 def extract_session_id(request: Request, body: dict) -> Optional[str]:
-    """Extract session ID from various sources (Hume sends it in body)."""
-    # Check body first (Hume's primary method)
     session_id = body.get("custom_session_id") or body.get("customSessionId") or body.get("session_id")
     if session_id:
         return session_id
 
-    # Check metadata
     metadata = body.get("metadata", {})
     session_id = metadata.get("custom_session_id") or metadata.get("session_id")
     if session_id:
         return session_id
 
-    # Check headers as fallback
     for header in ["x-hume-session-id", "x-custom-session-id", "x-session-id"]:
         session_id = request.headers.get(header)
         if session_id:
@@ -773,14 +704,9 @@ def extract_session_id(request: Request, body: dict) -> Optional[str]:
 
 
 def parse_session_id(session_id: Optional[str]) -> dict:
-    """
-    Parse custom session ID format: "userName|userId"
-    Returns dict with user_name and user_id.
-    """
     if not session_id:
         return {"user_name": "", "user_id": ""}
 
-    # Handle anonymous sessions
     if session_id.startswith("anon_"):
         return {"user_name": "", "user_id": ""}
 
@@ -792,13 +718,6 @@ def parse_session_id(session_id: Optional[str]) -> dict:
 
 
 def extract_user_from_messages(messages: list) -> dict:
-    """
-    Extract user name and id from system messages.
-    Hume may forward sessionSettings.variables as system message content.
-    Looks for patterns like:
-    - "first_name: Dan" or "name: Dan"
-    - "user_id: abc123"
-    """
     import re
     user_name = ""
     user_id = ""
@@ -807,23 +726,18 @@ def extract_user_from_messages(messages: list) -> dict:
         if msg.get("role") == "system":
             content = msg.get("content", "")
             if isinstance(content, str):
-                # Look for first_name or name
                 match = re.search(r'\b(?:first_name|name):\s*(\w+)', content, re.IGNORECASE)
                 if match and match.group(1).lower() not in ['unknown', 'none', '']:
                     user_name = match.group(1)
-                    print(f"[CLM] Found name in system message: {user_name}", file=sys.stderr)
 
-                # Look for user_id or id (various formats)
                 match = re.search(r'\b(?:user_id|id):\s*([^\s,\n]+)', content, re.IGNORECASE)
                 if match and match.group(1).lower() not in ['unknown', 'none', 'anonymous', '']:
                     user_id = match.group(1)
-                    print(f"[CLM] Found user_id in system message: {user_id}", file=sys.stderr)
 
     return {"user_name": user_name, "user_id": user_id}
 
 
 async def stream_sse_response(content: str, msg_id: str):
-    """Stream OpenAI-compatible SSE chunks for Hume."""
     import asyncio
     words = content.split(' ')
     for i, word in enumerate(words):
@@ -837,50 +751,35 @@ async def stream_sse_response(content: str, msg_id: str):
             }]
         }
         yield f"data: {json.dumps(chunk)}\n\n"
-        await asyncio.sleep(0.01)  # Small delay for natural streaming
+        await asyncio.sleep(0.01)
 
-    # Final chunk
     yield f"data: {json.dumps({'id': msg_id, 'choices': [{'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
     yield "data: [DONE]\n\n"
 
 
 async def run_agent_for_clm(user_message: str, state: AppState, conversation_history: list = None) -> str:
-    """
-    Run the Pydantic AI agent and return text response for CLM.
-    This gives voice the SAME brain as CopilotKit chat.
-    """
     try:
-        from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart, ModelResponse, TextPart
+        from pydantic_ai.messages import ModelRequest, UserPromptPart, ModelResponse, TextPart
 
         deps = StateDeps(state)
-
-        # Build message history for multi-turn context
         message_history = []
+
         if conversation_history:
-            for msg in conversation_history[:-1]:  # Exclude current message
+            for msg in conversation_history[:-1]:
                 role = msg.get("role", "user")
                 content = msg.get("content", "")
                 if isinstance(content, str) and content.strip():
                     if role == "user":
-                        message_history.append(
-                            ModelRequest(parts=[UserPromptPart(content=content)])
-                        )
+                        message_history.append(ModelRequest(parts=[UserPromptPart(content=content)]))
                     elif role == "assistant":
-                        message_history.append(
-                            ModelResponse(parts=[TextPart(content=content)])
-                        )
+                        message_history.append(ModelResponse(parts=[TextPart(content=content)]))
 
-        print(f"[CLM] Running agent with {len(message_history)} history messages", file=sys.stderr)
-        print(f"[CLM] State: user={state.user}, zep_context={state.zep_context[:50] if state.zep_context else 'None'}...", file=sys.stderr)
-
-        # Run the agent with full context
         result = await agent.run(
             user_message,
             deps=deps,
             message_history=message_history if message_history else None
         )
 
-        # Extract text from result
         if hasattr(result, 'data') and result.data:
             return str(result.data)
         elif hasattr(result, 'output'):
@@ -890,17 +789,12 @@ async def run_agent_for_clm(user_message: str, state: AppState, conversation_his
 
     except Exception as e:
         print(f"[CLM] Agent error: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
         return ""
 
 
 @main_app.post("/chat/completions")
 async def clm_endpoint(request: Request):
-    """
-    OpenAI-compatible CLM endpoint for Hume EVI voice.
-    This gives voice the SAME brain as CopilotKit chat - full agent with tools.
-    """
+    """OpenAI-compatible CLM endpoint for Hume EVI voice."""
     import asyncio
     import time
 
@@ -910,27 +804,17 @@ async def clm_endpoint(request: Request):
         body = await request.json()
         messages = body.get("messages", [])
 
-        # Store for debugging
         _last_clm_request = {
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "body_keys": list(body.keys()),
-            "custom_session_id": body.get("custom_session_id"),
-            "customSessionId": body.get("customSessionId"),
-            "session_id": body.get("session_id"),
-            "metadata": body.get("metadata", {}),
-            "headers": {k: v for k, v in request.headers.items() if "session" in k.lower() or "hume" in k.lower()},
-            "messages": [{"role": m.get("role"), "content_preview": str(m.get("content", ""))[:500]} for m in messages]
+            "messages": [{"role": m.get("role"), "content_preview": str(m.get("content", ""))[:200]} for m in messages]
         }
 
-        print(f"[CLM] === REQUEST ===", file=sys.stderr)
-
-        # Extract session ID (format: "userName|userId")
         session_id = extract_session_id(request, body)
         parsed = parse_session_id(session_id)
         user_name = parsed["user_name"]
         user_id = parsed["user_id"]
 
-        # Fallback: extract from system messages
         if not user_name or not user_id:
             msg_parsed = extract_user_from_messages(messages)
             if not user_name and msg_parsed["user_name"]:
@@ -938,9 +822,6 @@ async def clm_endpoint(request: Request):
             if not user_id and msg_parsed["user_id"]:
                 user_id = msg_parsed["user_id"]
 
-        print(f"[CLM] User: name={user_name}, id={user_id}", file=sys.stderr)
-
-        # Extract user message
         user_msg = ""
         for msg in reversed(messages):
             if msg.get("role") == "user":
@@ -950,47 +831,37 @@ async def clm_endpoint(request: Request):
         if not user_msg:
             user_msg = "Hello"
 
-        print(f"[CLM] Message: {user_msg[:80]}...", file=sys.stderr)
-
-        # Get Zep context for the user
         zep_context = ""
         if user_id and zep_client:
             try:
                 await get_or_create_zep_user(user_id, None, user_name)
                 zep_context = await get_user_context(user_id)
-                if zep_context:
-                    print(f"[CLM] Zep context: {zep_context[:100]}...", file=sys.stderr)
             except Exception as e:
                 print(f"[CLM] Zep error: {e}", file=sys.stderr)
 
-        # Build state with user profile and Zep context
         user_profile = UserProfile(
             id=user_id if user_id else None,
             name=user_name if user_name else None,
         ) if user_id or user_name else None
 
         state = AppState(
-            current_price=0,
-            current_region="england",
-            current_buyer_type="standard",
+            current_stake=10,
+            current_odds="5/1",
+            current_terms="1/4",
+            current_places=3,
             last_calculation=None,
             user=user_profile,
             zep_context=zep_context
         )
 
-        # Run the actual Pydantic AI agent with full context
         response_text = await run_agent_for_clm(user_msg, state, conversation_history=messages)
 
-        # Fallback if agent fails
         if not response_text:
             if user_name:
-                response_text = f"Hi {user_name}! I can help you calculate stamp duty. What property price and location are you looking at?"
+                response_text = f"Hi {user_name}! I can help you calculate each-way bet returns. What's your stake and odds?"
             else:
-                response_text = "I can help you calculate stamp duty for properties in England, Scotland, or Wales. What's the property price?"
+                response_text = "Hi! I can help you calculate each-way bet returns. Tell me your stake and odds."
 
-        print(f"[CLM] Response: {response_text[:80]}...", file=sys.stderr)
-
-        # Store to Zep memory (fire and forget)
         if user_id and zep_client and user_msg:
             asyncio.create_task(add_conversation_to_zep(user_id, user_msg, response_text))
 
@@ -1002,17 +873,12 @@ async def clm_endpoint(request: Request):
 
     except Exception as e:
         print(f"[CLM] ERROR: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
-        error_response = f"Sorry, I encountered an error. Please try again."
+        error_response = "Sorry, I encountered an error. Please try again."
         return StreamingResponse(
             stream_sse_response(error_response, "error"),
             media_type="text/event-stream"
         )
 
 
-# Mount AG-UI app
 main_app.mount("/agui", ag_ui_app)
-
-# Export for uvicorn
 app = main_app

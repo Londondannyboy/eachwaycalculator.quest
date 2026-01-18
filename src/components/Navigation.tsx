@@ -4,25 +4,12 @@ import Link from "next/link";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 
-const CALCULATOR_PAGES = [
-  { href: "/", label: "SDLT Calculator", short: "Home" },
-  { href: "/first-time-buyer", label: "First-Time Buyer", short: "FTB" },
-  { href: "/second-home", label: "Second Home", short: "2nd Home" },
-  { href: "/buy-to-let", label: "Buy-to-Let", short: "BTL" },
-  { href: "/scotland", label: "Scotland LBTT", short: "Scotland" },
-  { href: "/wales", label: "Wales LTT", short: "Wales" },
-];
-
-const MORE_PAGES = [
-  { href: "/commercial", label: "Commercial Property" },
-  { href: "/london", label: "London Calculator" },
-  { href: "/holiday-let", label: "Holiday Let" },
-  { href: "/refund", label: "Stamp Duty Refund" },
+const NAV_PAGES = [
+  { href: "/", label: "Calculator", short: "Home" },
 ];
 
 export function Navigation() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const pathname = usePathname();
 
   const isActive = (href: string) => pathname === href;
@@ -33,23 +20,23 @@ export function Navigation() {
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">SD</span>
+            <div className="w-8 h-8 bg-gradient-to-br from-emerald-600 to-emerald-700 rounded-lg flex items-center justify-center">
+              <span className="text-white font-bold text-sm">EW</span>
             </div>
             <span className="font-bold text-zinc-900 dark:text-white hidden sm:block">
-              Stamp Duty Calculator
+              Each-Way Calculator
             </span>
           </Link>
 
           {/* Desktop Navigation */}
           <div className="hidden lg:flex items-center gap-1">
-            {CALCULATOR_PAGES.map((page) => (
+            {NAV_PAGES.map((page) => (
               <Link
                 key={page.href}
                 href={page.href}
                 className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                   isActive(page.href)
-                    ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                    ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300"
                     : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-white"
                 }`}
               >
@@ -57,46 +44,18 @@ export function Navigation() {
               </Link>
             ))}
 
-            {/* More Dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setMoreMenuOpen(!moreMenuOpen)}
-                onBlur={() => setTimeout(() => setMoreMenuOpen(false), 150)}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 ${
-                  MORE_PAGES.some((p) => isActive(p.href))
-                    ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
-                    : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                }`}
-              >
-                More
-                <svg
-                  className={`w-4 h-4 transition-transform ${moreMenuOpen ? "rotate-180" : ""}`}
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-
-              {moreMenuOpen && (
-                <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-zinc-900 rounded-xl shadow-lg border border-zinc-200 dark:border-zinc-700 py-2">
-                  {MORE_PAGES.map((page) => (
-                    <Link
-                      key={page.href}
-                      href={page.href}
-                      className={`block px-4 py-2 text-sm ${
-                        isActive(page.href)
-                          ? "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
-                          : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-                      }`}
-                    >
-                      {page.label}
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </div>
+            {/* External Resources */}
+            <a
+              href="https://www.begambleaware.org"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-white transition-colors flex items-center gap-1"
+            >
+              Gamble Responsibly
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </a>
           </div>
 
           {/* Mobile Menu Button */}
@@ -119,21 +78,33 @@ export function Navigation() {
         {/* Mobile Menu */}
         {mobileMenuOpen && (
           <div className="lg:hidden py-4 border-t border-zinc-200 dark:border-zinc-800">
-            <div className="grid grid-cols-2 gap-2">
-              {[...CALCULATOR_PAGES, ...MORE_PAGES].map((page) => (
+            <div className="flex flex-col gap-2">
+              {NAV_PAGES.map((page) => (
                 <Link
                   key={page.href}
                   href={page.href}
                   onClick={() => setMobileMenuOpen(false)}
                   className={`px-3 py-2 rounded-lg text-sm font-medium ${
                     isActive(page.href)
-                      ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                      ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300"
                       : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
                   }`}
                 >
                   {page.label}
                 </Link>
               ))}
+              <a
+                href="https://www.begambleaware.org"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setMobileMenuOpen(false)}
+                className="px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-1"
+              >
+                Gamble Responsibly
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
             </div>
           </div>
         )}

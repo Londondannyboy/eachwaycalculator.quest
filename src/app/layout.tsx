@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { Providers } from "@/components/providers";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
+import { BetaBanner } from "@/components/BetaBanner";
+import { CookieConsent } from "@/components/CookieConsent";
 import "@copilotkit/react-ui/styles.css";
 import "./globals.css";
 
@@ -18,44 +20,44 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "UK Stamp Duty Calculator 2025 | SDLT, LBTT & LTT",
-    template: "%s | Stamp Duty Calculator UK",
+    default: "Each-Way Calculator | Free Betting Returns Calculator",
+    template: "%s | Each-Way Calculator",
   },
   description:
-    "Free UK stamp duty calculator with AI assistant. Calculate SDLT for England, LBTT for Scotland, and LTT for Wales. First-time buyer relief, buy-to-let, and second home rates included.",
+    "Free each-way bet calculator with AI assistant. Calculate your potential returns for horse racing, golf, and sports betting. Instant win and place payouts.",
   keywords: [
-    "stamp duty calculator",
-    "stamp duty calculator uk",
-    "sdlt calculator",
-    "lbtt calculator",
-    "ltt calculator",
-    "first time buyer stamp duty",
-    "second home stamp duty",
-    "buy to let stamp duty",
-    "stamp duty 2025",
-    "uk property tax calculator",
+    "each way calculator",
+    "each-way bet calculator",
+    "horse racing calculator",
+    "betting calculator",
+    "place bet calculator",
+    "each way returns",
+    "betting odds calculator",
+    "golf betting calculator",
+    "sports betting calculator",
+    "each way betting explained",
   ],
-  authors: [{ name: "Stamp Duty Calculator UK" }],
-  creator: "Stamp Duty Calculator UK",
-  publisher: "Stamp Duty Calculator UK",
-  metadataBase: new URL("https://stampdutycalculator.quest"),
+  authors: [{ name: "Each-Way Calculator" }],
+  creator: "Each-Way Calculator",
+  publisher: "Each-Way Calculator",
+  metadataBase: new URL("https://eachwaycalculator.quest"),
   alternates: {
-    canonical: "https://stampdutycalculator.quest",
+    canonical: "https://eachwaycalculator.quest",
   },
   openGraph: {
     type: "website",
     locale: "en_GB",
-    url: "https://stampdutycalculator.quest",
-    siteName: "UK Stamp Duty Calculator",
-    title: "UK Stamp Duty Calculator 2025 | Free SDLT, LBTT & LTT Calculator",
+    url: "https://eachwaycalculator.quest",
+    siteName: "Each-Way Calculator",
+    title: "Each-Way Calculator | Free Betting Returns Calculator",
     description:
-      "Calculate UK stamp duty instantly. Free calculator for England (SDLT), Scotland (LBTT), and Wales (LTT). Includes first-time buyer relief and additional property surcharges.",
+      "Calculate each-way bet returns instantly. Free calculator for horse racing, golf, and sports betting. AI-powered assistance for understanding your win and place payouts.",
   },
   twitter: {
     card: "summary_large_image",
-    title: "UK Stamp Duty Calculator 2025",
+    title: "Each-Way Calculator | Free Betting Returns",
     description:
-      "Free stamp duty calculator for England, Scotland and Wales. Calculate SDLT, LBTT and LTT with AI assistance.",
+      "Free each-way bet calculator for horse racing, golf, and sports. Calculate win and place returns with AI assistance.",
   },
   robots: {
     index: true,
@@ -74,28 +76,28 @@ export const metadata: Metadata = {
 const websiteJsonLd = {
   "@context": "https://schema.org",
   "@type": "WebSite",
-  "@id": "https://stampdutycalculator.quest/#website",
-  name: "UK Stamp Duty Calculator",
-  alternateName: ["SDLT Calculator", "Stamp Duty Calculator UK", "LBTT Calculator"],
-  url: "https://stampdutycalculator.quest",
+  "@id": "https://eachwaycalculator.quest/#website",
+  name: "Each-Way Calculator",
+  alternateName: ["Each Way Bet Calculator", "E/W Calculator", "Betting Returns Calculator"],
+  url: "https://eachwaycalculator.quest",
   description:
-    "Free UK stamp duty calculator for England, Scotland and Wales. Calculate SDLT, LBTT and LTT instantly.",
+    "Free each-way bet calculator for horse racing, golf, and sports betting. Calculate win and place returns instantly.",
   inLanguage: "en-GB",
   publisher: {
     "@type": "Organization",
-    "@id": "https://stampdutycalculator.quest/#organization",
-    name: "Stamp Duty Calculator UK",
-    url: "https://stampdutycalculator.quest",
+    "@id": "https://eachwaycalculator.quest/#organization",
+    name: "Each-Way Calculator",
+    url: "https://eachwaycalculator.quest",
   },
 };
 
 const softwareJsonLd = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
-  "@id": "https://stampdutycalculator.quest/#app",
-  name: "UK Stamp Duty Calculator",
+  "@id": "https://eachwaycalculator.quest/#app",
+  name: "Each-Way Calculator",
   description:
-    "Free online stamp duty calculator for UK property purchases. Calculate SDLT (England), LBTT (Scotland), and LTT (Wales).",
+    "Free online each-way bet calculator for horse racing, golf, and sports betting. Calculate potential returns instantly.",
   applicationCategory: "FinanceApplication",
   operatingSystem: "Any",
   offers: {
@@ -104,12 +106,14 @@ const softwareJsonLd = {
     priceCurrency: "GBP",
   },
   featureList: [
-    "SDLT calculation for England & Northern Ireland",
-    "LBTT calculation for Scotland",
-    "LTT calculation for Wales",
-    "First-time buyer relief calculator",
-    "Additional property surcharge calculator",
+    "Each-way bet calculation",
+    "Win and place returns",
+    "Multiple odds formats (fractional, decimal)",
+    "Standard horse racing terms",
+    "Golf and sports betting support",
     "AI-powered assistance",
+    "Visual returns breakdown",
+    "Odds comparison charts",
   ],
 };
 
@@ -120,8 +124,8 @@ const breadcrumbJsonLd = {
     {
       "@type": "ListItem",
       position: 1,
-      name: "Stamp Duty Calculator",
-      item: "https://stampdutycalculator.quest",
+      name: "Each-Way Calculator",
+      item: "https://eachwaycalculator.quest",
     },
   ],
 };
@@ -139,7 +143,7 @@ export default function RootLayout({
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
         <link rel="shortcut icon" href="/favicon.ico" />
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-        <meta name="apple-mobile-web-app-title" content="Stamp Duty Calculator" />
+        <meta name="apple-mobile-web-app-title" content="Each-Way Calculator" />
         <link rel="manifest" href="/site.webmanifest" />
 
         {/* JSON-LD Structured Data */}
@@ -160,9 +164,11 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen flex flex-col`}
       >
         <Providers>
+          <BetaBanner />
           <Navigation />
           <main className="flex-1">{children}</main>
           <Footer />
+          <CookieConsent />
         </Providers>
       </body>
     </html>
