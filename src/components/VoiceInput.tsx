@@ -130,8 +130,13 @@ Help users understand each-way betting and calculate returns for horse racing, g
 
         console.log("🎤 Connected successfully");
 
+        // Send greeting with user name so CLM knows who they are
         setTimeout(() => {
-          sendUserInput("speak your greeting");
+          if (userName) {
+            sendUserInput(`Hello, my name is ${userName}`);
+          } else {
+            sendUserInput("Hello, I'd like to calculate an each-way bet");
+          }
         }, 500);
 
       } catch (e) {
